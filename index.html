@@ -1,0 +1,742 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Solar Tracker V2</title><meta name=viewport content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#eef2f4"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="icon" href="icon-192.png"><script>if("serviceWorker" in navigator && (location.protocol==="https:" || location.hostname==="localhost"))window.addEventListener("load",function(){navigator.serviceWorker.register("./sw.js").catch(function(e){console.warn("Offline cache unavailable",e);});});</script></head><body>
+
+<!-- System font stack: no network requests, fully offline. -->
+<style>
+/* Layout: a meter-room ledger. Header, a split bar showing where the month's power came from, two charts, entry form beside settings, then the monthly table. */
+:root {
+  --bg: #eef2f4;
+  --surface: #ffffff;
+  --surface-2: #e5ebee;
+  --line: #d2dade;
+  --fg: #111e26;
+  --muted: #566873;
+  --grid: #2e55c4;
+  --solar: #e09600;
+  --on-grid: #ffffff;
+  --on-solar: #1c1300;
+  --good: #14744a;
+  --bad: #b3382c;
+  --sel: rgba(46, 85, 196, 0.09);
+  --display: "Segoe UI", system-ui, sans-serif;
+  --body: "Segoe UI", system-ui, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0b1317;
+    --surface: #121c22;
+    --surface-2: #1a2830;
+    --line: #25353e;
+    --fg: #e7eff3;
+    --muted: #8da1ad;
+    --grid: #7f9dff;
+    --solar: #f3b73a;
+    --on-grid: #0b1317;
+    --on-solar: #1c1300;
+    --good: #4dc58b;
+    --bad: #f27d6d;
+    --sel: rgba(127, 157, 255, 0.13);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0b1317;
+  --surface: #121c22;
+  --surface-2: #1a2830;
+  --line: #25353e;
+  --fg: #e7eff3;
+  --muted: #8da1ad;
+  --grid: #7f9dff;
+  --solar: #f3b73a;
+  --on-grid: #0b1317;
+  --on-solar: #1c1300;
+  --good: #4dc58b;
+  --bad: #f27d6d;
+  --sel: rgba(127, 157, 255, 0.13);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 var(--body);
+  padding-block: 20px 56px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 36px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(32px, 7vw, 50px); line-height: 1; letter-spacing: -0.025em; font-weight: 800; }
+h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
+p { margin: 0; }
+.eyebrow, .lbl, th, .tick-note {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+header { display: flex; flex-wrap: wrap; gap: 16px 24px; justify-content: space-between; align-items: flex-end; }
+header .titles { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+header .sub { color: var(--muted); max-width: 52ch; }
+.period { display: flex; flex-direction: column; gap: 6px; }
+
+label { display: block; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.field .hint { font-size: 12.5px; color: var(--muted); }
+input, select, textarea {
+  font: 15px var(--mono);
+  color: var(--fg);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 12px;
+  height: 42px;
+  width: 100%;
+  min-width: 0;
+}
+textarea { height: auto; padding: 10px 12px; font-size: 12.5px; line-height: 1.45; resize: vertical; }
+input[readonly] { background: var(--surface-2); color: var(--muted); }
+select { font-family: var(--body); font-weight: 500; }
+:focus-visible { outline: 2px solid var(--grid); outline-offset: 2px; }
+.btn {
+  font: 600 14px var(--body);
+  height: 42px;
+  padding: 0 18px;
+  border-radius: 6px;
+  border: 1px solid var(--fg);
+  background: var(--fg);
+  color: var(--bg);
+  cursor: pointer;
+}
+.btn.ghost { background: transparent; color: var(--fg); border-color: var(--line); }
+.btn.ghost:hover { border-color: var(--fg); }
+.btn.small { height: 32px; padding: 0 12px; font-size: 13px; }
+.linkbtn { font: 500 13px var(--body); background: none; border: 0; color: var(--grid); cursor: pointer; padding: 4px 6px; border-radius: 4px; text-decoration: underline; text-underline-offset: 3px; }
+.linkbtn.danger { color: var(--bad); }
+
+.banner { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: space-between; padding: 12px 16px; border: 1px dashed var(--solar); border-radius: 8px; background: var(--surface); }
+.banner p { min-width: 0; flex: 1 1 260px; }
+.warn { padding: 12px 16px; border: 1px solid var(--bad); border-radius: 8px; color: var(--bad); background: var(--surface); }
+
+/* Source split */
+.split-wrap { display: flex; flex-direction: column; gap: 14px; }
+.split { display: flex; height: 40px; border-radius: 6px; overflow: hidden; background: var(--surface-2); }
+.seg { display: flex; align-items: center; padding: 0 12px; font: 500 13px var(--mono); white-space: nowrap; overflow: hidden; min-width: 0; }
+.seg.g { background: var(--grid); color: var(--on-grid); }
+.seg.s { background: var(--solar); color: var(--on-solar); justify-content: flex-end; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13.5px; }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; display: inline-block; flex: none; }
+.sw.g { background: var(--grid); }
+.sw.s { background: var(--solar); }
+.sw.dash { background: none; border: 2px dashed var(--fg); height: 0; width: 18px; border-radius: 0; border-width: 0 0 2px 0; }
+
+dl.metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px 28px; margin: 0; }
+dl.metrics > div { border-top: 1px solid var(--line); padding-top: 10px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+dl.metrics dt { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+dl.metrics dd { margin: 0; font: 700 26px/1.1 var(--display); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
+dl.metrics dd small { font: 400 12.5px var(--body); color: var(--muted); display: block; letter-spacing: 0; margin-top: 4px; }
+.pos { color: var(--good); }
+.neg { color: var(--bad); }
+
+section > header, .sec-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 16px; align-items: baseline; margin-bottom: 14px; }
+.cols { display: grid; gap: 28px; grid-template-columns: 1fr; }
+@media (min-width: 880px) { .cols.two { grid-template-columns: 1fr 1fr; } .cols.form { grid-template-columns: 1.35fr 1fr; } }
+.chart-box { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.chart {overflow-x:auto}.chart svg { width: 100%; min-width: 420px; height: auto; display: block; }
+.chart text { font: 11px var(--mono); fill: var(--muted); }
+.chart .bar { outline: none; cursor: pointer; }
+.chart .hit { fill: transparent; }
+.chart .bar.on .hit { fill: var(--sel); }
+.chart .bar:focus-visible .hit { stroke: var(--grid); stroke-width: 1.5; }
+.readout { font: 13px var(--mono); min-height: 40px; color: var(--fg); }
+.empty { color: var(--muted); padding: 18px 0; }
+
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 20px; display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.fields { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.msg { font-size: 13.5px; min-height: 20px; }
+.msg.err { color: var(--bad); }
+.msg.ok { color: var(--good); }
+
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 820px; font: 13px var(--mono); font-variant-numeric: tabular-nums; }
+th, td { padding: 11px 12px; text-align: right; white-space: nowrap; border-bottom: 1px solid var(--line); }
+th:first-child, td:first-child { text-align: left; }
+tbody th { font: 500 13px var(--mono); text-transform: none; letter-spacing: 0; color: var(--fg); }
+thead th { background: var(--surface-2); border-bottom: 1px solid var(--line); }
+tbody tr:last-child th, tbody tr:last-child td { border-bottom: 0; }
+td.act { text-align: right; }
+
+details.backup { border-top: 1px solid var(--line); padding-top: 16px; }
+details.backup summary { cursor: pointer; font-weight: 600; }
+details.backup .inner { display: flex; flex-direction: column; gap: 12px; margin-top: 14px; }
+footer { color: var(--muted); font-size: 12.5px; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .seg { transition: flex-basis 0.4s ease; }
+}
+</style>
+
+<main class="wrap">
+  <header>
+    <div class="titles">
+      <span class="eyebrow">Grid + hybrid solar · monthly</span>
+      <h1>Solar Tracker <span style="font-size:13px;vertical-align:middle;font-weight:600;color:var(--muted)">V2</span></h1>
+      <p class="sub">raynorcsuruelos@gmail.com</p>
+    </div>
+    <div class="period field">
+      <label class="lbl" for="period">Showing</label>
+      <select id="period"></select>
+    </div>
+  </header>
+
+  <div id="banner"></div>
+
+  <section aria-labelledby="h-split">
+    <div class="sec-head"><h2 id="h-split">Where your power came from</h2><span class="tick-note" id="rangeNote"></span></div>
+    <div id="summary"></div>
+  </section>
+
+  <section class="cols two" aria-label="Charts">
+    <div class="chart-box">
+      <div class="sec-head" style="margin:0"><h2>Energy per month</h2><span class="tick-note">kWh</span></div>
+      <div class="legend" id="legKwh"></div>
+      <div class="chart" id="chartKwh"></div>
+      <div class="readout" id="roKwh" aria-live="polite"></div>
+    </div>
+    <div class="chart-box">
+      <div class="sec-head" style="margin:0"><h2>Bill per month</h2><span class="tick-note">Pesos</span></div>
+      <div class="legend"><span><i class="sw g"></i>Bill paid</span><span><i class="sw dash"></i>Estimate without solar</span></div>
+      <div class="chart" id="chartBill"></div>
+      <div class="readout" id="roBill" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <section class="cols form" aria-label="Add a month and settings">
+    <form class="panel" id="entry" novalidate>
+      <div class="sec-head" style="margin:0"><h2 id="formTitle">Add a month</h2><span class="tick-note">From your bill and inverter app</span></div>
+      <div class="fields">
+        <div class="field">
+          <label class="lbl" for="f-month">Billing month</label>
+          <input id="f-month" type="month" placeholder="YYYY-MM" pattern="\d{4}-\d{2}" required>
+        </div>
+        <div class="field">
+          <label class="lbl" for="f-imp">Utility meter — grid import (kWh)</label>
+          <input id="f-imp" type="number" inputmode="decimal" min="0" step="any" required>
+          <span class="hint">Monthly kWh from your utility power meter</span>
+        </div>
+        <div class="field"><label class="lbl" for="f-self">Hybrid inverter AC output to house (kWh)</label><input id="f-self" type="number" min="0" step="any" inputmode="decimal"><span class="hint">Monthly AC kWh delivered to house, including energy from solar-charged batteries. Required for new entries.</span></div>
+        <div class="field">
+          <label class="lbl" for="f-bill">Bill amount (₱)</label>
+          <input id="f-bill" type="number" inputmode="decimal" min="0" step="any" required>
+          <span class="hint">Total amount due this month</span>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn" type="submit" id="saveBtn">Save month</button>
+        <button class="btn ghost" type="button" id="cancelEdit" hidden>Cancel edit</button>
+        <span class="msg" id="formMsg" role="status" aria-live="polite"></span>
+      </div>
+    </form>
+
+    <div class="panel">
+      <div class="sec-head" style="margin:0"><h2>Settings</h2></div>
+      <div class="field">
+        <label class="lbl" for="s-utility">Utility name</label>
+        <input id="s-utility" type="text" placeholder="e.g. Meralco" autocomplete="off">
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="h-analytics"><div class="sec-head"><h2 id="h-analytics">Solar performance insights</h2><span class="tick-note">Based on recorded months</span></div><div id="analytics"></div></section>
+  <section aria-labelledby="h-ledger">
+    <div class="sec-head"><h2 id="h-ledger">Monthly ledger</h2><span class="tick-note">Home use = utility meter + hybrid inverter AC output</span></div>
+    <div class="table-scroll" id="ledger"></div>
+  </section>
+
+  <details class="backup">
+    <summary>Backup and restore</summary>
+    <div class="inner">
+      <p class="hint" style="color:var(--muted)">Data stays on this device. Export JSON regularly. Restoring replaces all existing records after confirmation; a safety copy is downloaded first.</p>
+      <textarea id="backup" rows="5" spellcheck="false" aria-label="Backup text"></textarea>
+      <div class="actions">
+        <button class="btn ghost small" type="button" id="copyBackup">Copy backup</button>
+        <button class="btn ghost small" type="button" id="downloadBackup">Download JSON</button>
+        <button class="btn ghost small" type="button" id="restoreBackup">Restore from text</button>
+        <label class="btn ghost small" style="display:inline-flex;align-items:center;cursor:pointer" for="restoreFile">Restore from file</label>
+        <input id="restoreFile" type="file" accept=".json,application/json" hidden>
+        <span class="msg" id="backupMsg" role="status" aria-live="polite"></span>
+      </div>
+    </div>
+  </details>
+
+  <footer>V2 · Offline standalone. Batteries charge only from solar. Home use = utility meter + hybrid inverter AC output. Savings use bill ÷ utility kWh as an approximate effective rate; fixed charges may overstate savings. Legacy months without inverter output are excluded from solar contribution until updated.</footer>
+</main>
+
+<script>
+(function () {
+  var KEY = 'wattledger.v1'; // Retain existing storage key for seamless V1 migration
+  var VERSION = 2;
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  var SAMPLE = [
+    { month: '2026-03', imp: 310, gen: 420, bill: 3748 },
+    { month: '2026-04', imp: 355, gen: 455, bill: 4390 },
+    { month: '2026-05', imp: 390, gen: 470, bill: 4871 },
+    { month: '2026-06', imp: 300, gen: 380, bill: 3648 },
+    { month: '2026-07', imp: 285, gen: 360, bill: 3483 },
+    { month: '2026-08', imp: 270, gen: 395, bill: 3247 },
+    { month: '2026-09', imp: 255, gen: 410, bill: 3016 },
+    { month: '2026-10', imp: 280, gen: 400, bill: 3397 }
+  ];
+  var storageOk = true;
+  var state = defaults();
+  var db = null;
+  var writeQueue = Promise.resolve();
+  var storageReady = false;
+  var editing = null;
+  var confirmDel = null;
+  var chartData = { kwh: [], bill: [] };
+
+  function $(s) { return document.querySelector(s); }
+  function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  function defaults() {
+    return { settings: { rate: 12.8, kwp: '', utility: '' }, records: SAMPLE.map(function (r) { return Object.assign({monthlyRate:12.8}, r); }), sample: true, version:VERSION };
+  }
+  function validMonth(m) { return typeof m === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(m); }
+  function finiteNonnegative(x) { return typeof x === 'number' && Number.isFinite(x) && x >= 0; }
+  function optionalNum(x) { return x === '' || x === null || x === undefined ? null : Number(x); }
+  function validateRecords(records) {
+    if (!Array.isArray(records) || records.length > 2400) throw Error('Invalid number of records');
+    var seen = new Set();
+    return records.map(function (r) {
+      if (!r || !validMonth(r.month) || seen.has(r.month)) throw Error('Invalid or duplicate month');
+      seen.add(r.month);
+      var out = {month:r.month};
+      ['imp','gen','bill'].forEach(function(k){var v=Number(r[k]);if(r[k] === '' || r[k] === null || !finiteNonnegative(v)) throw Error('Invalid '+k);out[k]=v;});
+      ['self','export','charge','discharge','monthlyRate','fixed'].forEach(function(k){var v=optionalNum(r[k]);if(v!==null && !finiteNonnegative(v))throw Error('Invalid '+k);if(v!==null)out[k]=v;});
+      // AC output can exceed same-month PV generation because stored solar may be discharged.
+      if(typeof r.pvKnown==='boolean')out.pvKnown=r.pvKnown;
+      return out;
+    });
+  }
+  function safeSettings(o) {
+    o=o||{};
+    var rate=Number(o.rate),kwp=optionalNum(o.kwp);
+    if(!finiteNonnegative(rate) || (kwp!==null && !finiteNonnegative(kwp)))throw Error('Invalid settings');
+    return {rate:rate,kwp:kwp===null?'':kwp,utility:String(o.utility||'').slice(0,100)};
+  }
+  function migrate(s) {
+    var records=validateRecords(s.records), settings=safeSettings(s.settings);
+    // V1 historical rates were global. Snapshot their rate so later edits cannot rewrite history.
+    records.forEach(function(r){if(r.monthlyRate===undefined)r.monthlyRate=settings.rate;});
+    return {settings:settings,records:records,sample:!!s.sample,version:VERSION};
+  }
+  function openDatabase() {
+    return new Promise(function(resolve,reject){
+      if(!('indexedDB' in window))return reject(Error('IndexedDB unavailable'));
+      var req=indexedDB.open('solar-tracker-v2',1);
+      req.onupgradeneeded=function(){var d=req.result;if(!d.objectStoreNames.contains('app'))d.createObjectStore('app');};
+      req.onsuccess=function(){resolve(req.result);};
+      req.onerror=function(){reject(req.error||Error('Database open failed'));};
+      req.onblocked=function(){reject(Error('Database upgrade blocked by another tab'));};
+    });
+  }
+  function dbGet() {
+    return new Promise(function(resolve,reject){
+      var tx=db.transaction('app','readonly'),req=tx.objectStore('app').get('state');
+      req.onsuccess=function(){resolve(req.result);};req.onerror=function(){reject(req.error);};
+    });
+  }
+  function dbPut(snapshot) {
+    return new Promise(function(resolve,reject){
+      var tx=db.transaction('app','readwrite');tx.objectStore('app').put(snapshot,'state');
+      tx.oncomplete=function(){resolve();};tx.onerror=function(){reject(tx.error||Error('Save failed'));};tx.onabort=function(){reject(tx.error||Error('Save aborted'));};
+    });
+  }
+  function persist() {
+    if(!storageReady||!db){storageOk=false;renderBanner();return Promise.reject(Error('Database unavailable'));}
+    var snapshot=JSON.parse(JSON.stringify(state));
+    writeQueue=writeQueue.catch(function(){}).then(function(){return dbPut(snapshot);}).then(function(){storageOk=true;},function(e){storageOk=false;renderBanner();console.error('IndexedDB save failed',e);throw e;});
+    // Existing event handlers are synchronous; suppress unhandled rejection while showing storage warning.
+    writeQueue.catch(function(){});
+    return writeQueue;
+  }
+  async function initializeStorage(){
+    document.querySelectorAll("input,button,select,textarea").forEach(function(el){el.disabled=true;});
+    try{
+      db=await openDatabase();
+      var saved=await dbGet();
+      if(saved){state=migrate(saved);}
+      else {
+        var legacy=null;
+        try{legacy=localStorage.getItem(KEY);}catch(e){}
+        if(legacy){try{state=migrate(JSON.parse(legacy));}catch(e){console.warn('Invalid legacy data; keeping untouched',e);}}
+        await dbPut(JSON.parse(JSON.stringify(state)));
+      }
+      storageReady=true;storageOk=true;
+    }catch(e){storageOk=false;console.error('IndexedDB initialization failed',e);}
+    $('#s-utility').value=state.settings.utility;
+    resetForm();renderAll();
+    document.querySelectorAll("input,button,select,textarea").forEach(function(el){el.disabled=false;});
+  }
+
+  /* number + month helpers */
+  function n0(v) { return Math.round(v).toLocaleString('en-US'); }
+  function n1(v) { return v.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 }); }
+  function n2(v) { return v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function peso(v) { return (v < 0 ? '−' : '') + '₱' + n0(Math.abs(v)); }
+  function pct(v) { return n1(v * 100) + '%'; }
+  function parts(k) { return { y: +k.slice(0, 4), m: +k.slice(5, 7) }; }
+  function idx(k) { var p = parts(k); return p.y * 12 + p.m - 1; }
+  function keyFromIdx(i) { return Math.floor(i / 12) + '-' + String(i % 12 + 1).padStart(2, '0'); }
+  function label(k) { var p = parts(k); return MONTHS[p.m - 1] + ' ' + p.y; }
+  function gridName() { return (state.settings.utility || '').trim() || 'Grid'; }
+  function rate() { return parseFloat(state.settings.rate) || 0; }
+
+  function calc(r) {
+    var measured = r.self != null;
+    var self = measured ? r.self : 0; // Missing legacy inverter reading is unknown, never PV generation
+    var home = r.imp + self;
+    var tariff = r.imp > 0 ? r.bill / r.imp : 0; // Effective billed rate; includes fixed charges
+    var avoided = self * tariff;
+    var none = r.bill + avoided; // retains actual fixed charges; no fictitious fixed-charge saving
+    return { self:self, home:home, share:home>0?self/home:0, none:none, saved:avoided, eff:r.imp>0?r.bill/r.imp:null, measured:measured, tariff:tariff };
+  }
+
+  function sorted() {
+    return state.records.slice().sort(function (a, b) { return idx(a.month) - idx(b.month); });
+  }
+  var period = '12';
+  function filtered() {
+    var all = sorted();
+    if (!all.length) return all;
+    var last = all[all.length - 1].month;
+    if (period === 'all') return all;
+    if (period === 'year') return all.filter(function (r) { return r.month.slice(0, 4) === last.slice(0, 4); });
+    var cut = idx(last) - 12;
+    return all.filter(function (r) { return idx(r.month) > cut; });
+  }
+
+  /* ---------- summary ---------- */
+  function renderPeriod() {
+    var all = sorted();
+    var sel = $('#period');
+    var yr = all.length ? all[all.length - 1].month.slice(0, 4) : String(new Date().getFullYear());
+    sel.innerHTML = '<option value="12">Latest 12 months</option><option value="year">' + yr + ' only</option><option value="all">All months</option>';
+    sel.value = period;
+  }
+
+  function renderSummary() {
+    var list = filtered();
+    var box = $('#summary');
+    var note = $('#rangeNote');
+    if (!list.length) {
+      note.textContent = '';
+      box.innerHTML = '<p class="empty">No months logged yet. Add your first month below and the summary will appear here.</p>';
+      return;
+    }
+    var t = { imp: 0, gen: 0, self: 0, home: 0, bill: 0, none: 0, measured:0 };
+    list.forEach(function (r) {
+      var c = calc(r);
+      t.imp += r.imp; t.gen += r.gen; t.self += c.self; t.home += c.home; t.bill += r.bill; t.none += c.none; if(c.measured)t.measured++;
+    });
+    var saved = t.none - t.bill;
+    var proxy = t.measured < list.length;
+    var share = t.home > 0 ? t.self / t.home : 0;
+    var gShare = 1 - share;
+    note.textContent = label(list[0].month) + (list.length > 1 ? ' to ' + label(list[list.length - 1].month) : '') + ' · ' + list.length + (list.length === 1 ? ' month' : ' months');
+    var yieldHtml = ''; 
+    var gl = gShare >= 0.14 ? esc(gridName()) + ' ' + n0(gShare * 100) + '%' : '';
+    var sl = share >= 0.14 ? 'Solar ' + n0(share * 100) + '%' : '';
+    box.innerHTML =
+      '<div class="split-wrap">' +
+      '<div class="split" role="img" aria-label="' + esc(gridName()) + ' ' + pct(gShare) + ', solar ' + pct(share) + ' of home use">' +
+      '<div class="seg g" style="flex:0 0 ' + (gShare * 100).toFixed(2) + '%">' + gl + '</div>' +
+      '<div class="seg s" style="flex:0 0 ' + (share * 100).toFixed(2) + '%">' + sl + '</div></div>' +
+      '<div class="legend"><span><i class="sw g"></i>' + esc(gridName()) + ': <b class="num">' + n0(t.imp) + ' kWh</b></span>' +
+      '<span><i class="sw s"></i>Solar: <b class="num">' + n0(t.self) + ' kWh</b></span></div></div>' +
+      '<dl class="metrics" style="margin-top:26px">' +
+      '<div><dt>' + (proxy?'Home use (proxy)':'Home use') + '</dt><dd>' + n0(t.home) + ' kWh<small>' + n0(t.home / list.length) + ' kWh per month</small></dd></div>' +
+      '<div><dt>' + (proxy?'Solar covered (proxy)':'Solar covered') + '</dt><dd>' + pct(share) + '<small>of everything you used</small></dd></div>' +
+      '<div><dt>Bills paid</dt><dd>' + peso(t.bill) + '<small>' + peso(t.bill / list.length) + ' per month</small></dd></div>' +
+      '<div><dt>Bill + avoided cost</dt><dd>' + peso(t.none) + '<small>effective billed rate estimate</small></dd></div>' +
+      '<div><dt>' + (proxy?'Estimated avoided cost (proxy)':'Estimated avoided cost') + '</dt><dd class="' + (saved >= 0 ? 'pos' : 'neg') + '">' + (saved >= 0 ? '+' : '') + peso(saved) + '<small>' + (t.none > 0 ? pct(saved / t.none) + ' of the no-solar bill' : '') + '</small></dd></div>' +
+      '<div><dt>Inverter AC delivered</dt><dd>' + n0(t.self) + ' kWh<small>' + n0(t.self / list.length) + ' kWh per recorded month</small></dd></div>' +
+      yieldHtml + '</dl>' + (proxy?'<p class="hint" style="color:var(--bad);margin-top:12px">Proxy warning: at least one month has no measured solar-to-home energy. Missing inverter output is counted as zero until you edit those legacy months; their home-use totals are incomplete.</p>':'');
+  }
+
+  /* ---------- charts ---------- */
+  function scaleFor(max) {
+    max = max || 1;
+    var raw = max / 4;
+    var p = Math.pow(10, Math.floor(Math.log10(raw)));
+    var f = raw / p;
+    var s = (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+    return { step: s, top: Math.ceil(max / s) * s || s };
+  }
+  function tick(v, kind) {
+    if (kind === 'bill') return '₱' + (v >= 1000 ? Number((v / 1000).toFixed(1)) + 'k' : v);
+    return v >= 1000 ? Number((v / 1000).toFixed(1)) + 'k' : String(v);
+  }
+
+  function chart(list, kind) {
+    if (!list.length) return '<p class="empty">No months to chart yet.</p>';
+    var W = Math.max(640, list.length*37), H = 250, L = 50, R = 8, T = 12, B = 38;
+    var n = list.length;
+    var data = list.map(function (r) { return { r: r, c: calc(r) }; });
+    chartData[kind] = data;
+    var vals = data.map(function (d) { return kind === 'kwh' ? d.r.imp + d.c.self : Math.max(d.r.bill, d.c.none); });
+    var sc = scaleFor(Math.max.apply(null, vals));
+    var ih = H - T - B, step = (W - L - R) / n, bw = Math.min(44, step * 0.6);
+    function Y(v) { return T + ih * (1 - v / sc.top); }
+    var s = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="' + (kind === 'kwh' ? 'Monthly energy by source' : 'Monthly bill compared with estimate without solar') + '">';
+    var ticks = Math.round(sc.top / sc.step);
+    for (var k = 0; k <= ticks; k++) {
+      var v = k * sc.step;
+      s += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + Y(v) + '" y2="' + Y(v) + '" stroke="var(--line)"/>' +
+        '<text x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + tick(v, kind) + '</text>';
+    }
+    data.forEach(function (d, i) {
+      var cx = L + step * i + step / 2, x = cx - bw / 2;
+      s += '<g class="bar" tabindex="0" role="button" aria-label="Select monthly chart details" data-kind="' + kind + '" data-i="' + i + '"><rect class="hit" x="' + (L + step * i) + '" y="' + T + '" width="' + step + '" height="' + ih + '"/>';
+      if (kind === 'kwh') {
+        var g = d.r.imp, so = d.c.self;
+        s += '<rect x="' + x + '" y="' + Y(g) + '" width="' + bw + '" height="' + (Y(0) - Y(g)) + '" fill="var(--grid)"/>' +
+          '<rect x="' + x + '" y="' + Y(g + so) + '" width="' + bw + '" height="' + Math.max(0, Y(g) - Y(g + so)) + '" fill="var(--solar)"/>';
+      } else {
+        s += '<rect x="' + x + '" y="' + Y(d.r.bill) + '" width="' + bw + '" height="' + (Y(0) - Y(d.r.bill)) + '" fill="var(--grid)"/>';
+      }
+      s += '</g>';
+    });
+    if (kind === 'bill') {
+      var pts = data.map(function (d, i) { return (L + step * i + step / 2) + ',' + Y(d.c.none); }).join(' ');
+      s += '<polyline points="' + pts + '" fill="none" stroke="var(--fg)" stroke-width="1.8" stroke-dasharray="5 4" pointer-events="none"/>';
+      data.forEach(function (d, i) {
+        s += '<circle cx="' + (L + step * i + step / 2) + '" cy="' + Y(d.c.none) + '" r="3.5" fill="var(--surface)" stroke="var(--fg)" stroke-width="1.8" pointer-events="none"/>';
+      });
+    }
+    var every = Math.ceil(n / Math.max(12,Math.floor(W/46)));
+    data.forEach(function (d, i) {
+      if (i % every !== 0) return;
+      var p = parts(d.r.month), cx = L + step * i + step / 2;
+      s += '<text x="' + cx + '" y="' + (H - 20) + '" text-anchor="middle">' + MONTHS[p.m - 1] + '</text>';
+      if (i === 0 || p.m === 1) s += '<text x="' + cx + '" y="' + (H - 6) + '" text-anchor="middle">' + p.y + '</text>';
+    });
+    s += '</svg>';
+    return s;
+  }
+
+  function selectBar(kind, i) {
+    var host = kind === 'kwh' ? $('#chartKwh') : $('#chartBill');
+    var ro = kind === 'kwh' ? $('#roKwh') : $('#roBill');
+    var d = chartData[kind][i];
+    if (!d) { ro.textContent = ''; return; }
+    host.querySelectorAll('.bar').forEach(function (g) { g.classList.toggle('on', +g.dataset.i === i); });
+    if (kind === 'kwh') {
+      ro.textContent = label(d.r.month) + ' · ' + gridName() + ' ' + n0(d.r.imp) + ' kWh · Solar ' + n0(d.c.self) + ' kWh';
+    } else {
+      ro.textContent = label(d.r.month) + ' · Bill ' + peso(d.r.bill) + ' · Bill + avoided cost ' + peso(d.c.none) + ' · ' + (d.c.saved >= 0 ? 'Avoided cost ' : 'Difference ') + peso(Math.abs(d.c.saved));
+    }
+  }
+
+  function renderCharts() {
+    var list = filtered();
+    $('#legKwh').innerHTML = '<span><i class="sw g"></i>' + esc(gridName()) + ' import</span><span><i class="sw s"></i>Solar-to-home / proxy</span>';
+    $('#chartKwh').innerHTML = chart(list, 'kwh');
+    $('#chartBill').innerHTML = chart(list, 'bill');
+    if (list.length) { selectBar('kwh', list.length - 1); selectBar('bill', list.length - 1); }
+    else { $('#roKwh').textContent = ''; $('#roBill').textContent = ''; }
+  }
+
+  /* ---------- ledger ---------- */
+  function renderLedger() {
+    var list = filtered().slice().reverse();
+    var box = $('#ledger');
+    if (!list.length) { box.innerHTML = '<p class="empty" style="padding:18px">Nothing logged yet.</p>'; return; }
+    var rows = list.map(function (r) {
+      var c = calc(r);
+      var act = confirmDel === r.month
+        ? 'Delete? <button class="linkbtn danger" data-act="del-yes" data-m="' + r.month + '">Yes</button><button class="linkbtn" data-act="del-no">No</button>'
+        : '<button class="linkbtn" data-act="edit" data-m="' + r.month + '">Edit</button><button class="linkbtn danger" data-act="del" data-m="' + r.month + '">Delete</button>';
+      return '<tr><th scope="row">' + label(r.month) + '</th>' +
+        '<td>' + n0(r.imp) + '</td><td>' + (c.measured?n0(c.self):'—') + '</td><td>' + (c.measured?n0(c.home):'—') + '</td>' +
+        '<td>' + pct(c.share) + (c.measured?'':'*') + '</td><td>' + peso(r.bill) + '</td>' +
+        '<td>' + (c.eff === null ? '–' : n2(c.eff)) + '</td>' +
+        '<td class="' + (c.saved >= 0 ? 'pos' : 'neg') + '">' + (c.saved >= 0 ? '+' : '') + peso(c.saved) + '</td>' +
+        '<td class="act">' + act + '</td></tr>';
+    }).join('');
+    box.innerHTML = '<table><thead><tr><th scope="col">Month</th><th scope="col">' + esc(gridName()) + ' kWh</th><th scope="col">Inverter AC kWh</th><th scope="col">Home kWh</th><th scope="col">Solar share</th><th scope="col">Bill</th><th scope="col">₱ per grid kWh</th><th scope="col">Avoided cost*</th><th scope="col"><span class="sr" style="position:absolute;left:-9999px">Actions</span></th></tr></thead><tbody>' + rows + '</tbody></table>';
+  }
+
+  function renderBanner() {
+    var b = '';
+    if (!storageOk) b += '<div class="warn" role="alert">IndexedDB storage is unavailable or a save failed. Changes may be lost when you close the page. Use Backup and restore below to keep a copy.</div>';
+    if (state.sample) b += '<div class="banner"><p><b>Example data.</b> These eight months are made-up figures so you can see how the app works. Your first saved month replaces them.</p><button class="btn ghost small" type="button" data-act="clear-sample">Clear examples now</button></div>';
+    $('#banner').innerHTML = b ? '<div style="display:flex;flex-direction:column;gap:12px">' + b + '</div>' : '';
+  }
+
+  function renderAll() {
+    renderBanner(); renderPeriod(); renderSummary(); renderCharts(); renderAnalytics(); renderLedger();
+  }
+
+  /* ---------- form ---------- */
+  function setMsg(el, text, kind) { el.textContent = text; el.className = 'msg' + (kind ? ' ' + kind : ''); }
+  function nextMonthKey() {
+    var all = sorted();
+    if (!all.length) { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+    return keyFromIdx(idx(all[all.length - 1].month) + 1);
+  }
+  function resetForm() {
+    editing = null;
+    $('#f-month').value = nextMonthKey();
+    $('#f-month').readOnly = false;
+    ['#f-imp', '#f-bill','#f-self'].forEach(function (s) { $(s).value = ''; });
+    $('#formTitle').textContent = 'Add a month';
+    $('#saveBtn').textContent = 'Save month';
+    $('#cancelEdit').hidden = true;
+  }
+  function startEdit(m) {
+    var r = state.records.filter(function (x) { return x.month === m; })[0];
+    if (!r) return;
+    editing = m;
+    $('#f-month').value = r.month; $('#f-month').readOnly = true;
+    $('#f-imp').value = r.imp; $('#f-bill').value = r.bill;
+    $('#f-self').value=r.self??'';
+    $('#formTitle').textContent = 'Edit ' + label(m);
+    $('#saveBtn').textContent = 'Update month';
+    $('#cancelEdit').hidden = false;
+    setMsg($('#formMsg'), '');
+    $('#entry').scrollIntoView({ block: 'center' });
+    $('#f-imp').focus();
+  }
+  function numVal(id) { var v = $(id).value.trim(); return v === '' ? NaN : parseFloat(v); }
+
+  $('#entry').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var msg = $('#formMsg');
+    var month = $('#f-month').value.trim();
+    var imp = numVal('#f-imp'), bill = numVal('#f-bill');
+    var ac = numVal('#f-self');
+    if (!validMonth(month)) return setMsg(msg, 'Pick the billing month, for example 2026-11.', 'err');
+    if ([imp, bill, ac].some(function (v) { return !Number.isFinite(v) || v < 0; })) return setMsg(msg, 'Enter nonnegative utility kWh, hybrid inverter AC output kWh and bill amount.', 'err');
+    if (state.sample) { state.records = []; state.sample = false; }
+    var rec = { month: month, imp: imp, gen: 0, bill: bill, self: ac, pvKnown: false };
+
+    var i = state.records.findIndex(function (r) { return r.month === month; });
+    var replaced = i >= 0;
+    if (replaced) state.records[i] = rec; else state.records.push(rec);
+    persist();
+    confirmDel = null;
+    resetForm();
+    renderAll();
+    setMsg(msg, (replaced ? 'Updated ' : 'Saved ') + label(month) + '.', 'ok');
+  });
+  $('#cancelEdit').addEventListener('click', function () { resetForm(); setMsg($('#formMsg'), ''); });
+
+  /* ---------- settings ---------- */
+  function bindSetting(id, key) {
+    var el = $(id);
+    el.value = state.settings[key];
+    el.addEventListener('input', function () {
+      if(key!=='utility' && el.value!=='' && !finiteNonnegative(Number(el.value)))return;
+      state.settings[key] = el.value;
+      persist(); renderBanner(); renderSummary(); renderCharts(); renderAnalytics(); renderLedger();
+    });
+  }
+  bindSetting('#s-utility', 'utility');
+
+  $('#period').addEventListener('change', function (e) {
+    period = e.target.value; renderSummary(); renderCharts(); renderAnalytics(); renderLedger();
+  });
+
+  /* ---------- delegated clicks ---------- */
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-act]');
+    if (b) {
+      var act = b.dataset.act, m = b.dataset.m;
+      if (act === 'edit') startEdit(m);
+      else if (act === 'del') { confirmDel = m; renderLedger(); }
+      else if (act === 'del-no') { confirmDel = null; renderLedger(); }
+      else if (act === 'del-yes') {
+        state.records = state.records.filter(function (r) { return r.month !== m; });
+        confirmDel = null;
+        if (editing === m) resetForm();
+        persist(); renderAll();
+      }
+      else if (act === 'clear-sample') { state.records = []; state.sample = false; persist(); resetForm(); renderAll(); }
+      return;
+    }
+    var g = e.target.closest('.bar');
+    if (g) selectBar(g.dataset.kind, +g.dataset.i);
+  });
+  document.addEventListener('keydown',function(e){var g=e.target.closest&&e.target.closest('.bar');if(g&&(e.key==='Enter'||e.key===' ')){e.preventDefault();selectBar(g.dataset.kind,+g.dataset.i);}});
+  ['mouseover', 'focusin'].forEach(function (ev) {
+    document.addEventListener(ev, function (e) {
+      var g = e.target.closest && e.target.closest('.bar');
+      if (g) selectBar(g.dataset.kind, +g.dataset.i);
+    });
+  });
+
+  /* ---------- analytics ---------- */
+  function renderAnalytics() {
+    var list=filtered(),box=$('#analytics');
+    if(!list.length){box.innerHTML='<p class="empty">Add monthly records to see performance insights.</p>';return;}
+    var grid=0,solar=0,avoided=0,measured=0;
+    list.forEach(function(r){var c=calc(r);grid+=r.imp;solar+=c.self;avoided+=c.saved;if(c.measured)measured++;});
+    var latest=list[list.length-1],previous=list.length>1?list[list.length-2]:null;
+    var delta=previous&&latest.self!=null&&previous.self!=null?latest.self-previous.self:null;
+    box.innerHTML='<dl class="metrics">'+
+      '<div><dt>Average inverter AC / month</dt><dd>'+n1(solar/list.length)+' kWh</dd></div>'+
+      '<div><dt>Average grid / month</dt><dd>'+n1(grid/list.length)+' kWh</dd></div>'+
+      '<div><dt>Inverter output change</dt><dd>'+(delta===null?'—':(delta>=0?'+':'')+n1(delta)+' kWh')+'<small>latest vs preceding month with readings</small></dd></div>'+
+      '<div><dt>Grid independence</dt><dd>'+pct((grid+solar)>0?solar/(grid+solar):0)+'</dd></div>'+
+      '<div><dt>Months with inverter readings</dt><dd>'+measured+' / '+list.length+'</dd></div>'+
+      '<div><dt>Estimated avoided bill cost</dt><dd>'+peso(avoided)+'<small>based on bill ÷ grid kWh; may include fixed charges</small></dd></div></dl>';
+  }
+
+  /* ---------- backup ---------- */
+  function backupText(){return JSON.stringify({app:'watt-ledger',version:VERSION,settings:state.settings,records:sorted()},null,2);}
+  function downloadText(txt,name){
+    var blob=new Blob([txt],{type:'application/json;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');
+    a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(function(){URL.revokeObjectURL(url);},1000);
+  }
+  $('#downloadBackup').addEventListener('click',function(){downloadText(backupText(),'Solar-Tracker-V2-backup-'+new Date().toISOString().slice(0,10)+'.json');setMsg($('#backupMsg'),'Backup downloaded.','ok');});
+  $('#copyBackup').addEventListener('click',function(){
+    var ta=$('#backup'),msg=$('#backupMsg');ta.value=backupText();ta.focus();ta.select();
+    if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(ta.value).then(function(){setMsg(msg,'Backup copied.','ok');},function(){setMsg(msg,'Copy unavailable; text selected for manual copy.','err');});
+    else setMsg(msg,'Copy unavailable; text selected for manual copy.','err');
+  });
+  function restoreFrom(txt){
+    var msg=$('#backupMsg'),incoming;
+    try{
+      if(txt.length>2000000)throw Error('Backup too large');
+      var o=JSON.parse(txt);
+      if(!o||o.app!=='watt-ledger'||![1,2].includes(o.version)||!Array.isArray(o.records))throw Error('Unknown backup format');
+      incoming=migrate({settings:o.settings||state.settings,records:o.records,sample:false});
+    }catch(e){setMsg(msg,'Invalid backup: '+e.message+'. No data changed.','err');return;}
+    if(!confirm('Restore '+incoming.records.length+' months? This REPLACES your current data. A safety backup will download first.'))return;
+    try{downloadText(backupText(),'Solar-Tracker-before-restore-'+new Date().toISOString().replace(/[:.]/g,'-')+'.json');}
+    catch(e){setMsg(msg,'Could not create safety backup. Restore cancelled.','err');return;}
+    var prior=state;state=incoming;
+    persist().then(function(){
+      $('#s-utility').value=state.settings.utility;
+      resetForm();renderAll();setMsg(msg,'Restored '+incoming.records.length+' months.','ok');
+    }).catch(function(){
+      state=prior;renderAll();setMsg(msg,'Could not save restored data; original records retained in memory.','err');
+    });
+  }
+  $('#restoreBackup').addEventListener('click',function(){restoreFrom($('#backup').value);});
+  $('#restoreFile').addEventListener('change',function(e){var f=e.target.files&&e.target.files[0];if(!f)return;if(f.size>2000000){setMsg($('#backupMsg'),'File exceeds 2 MB limit.','err');return;}var fr=new FileReader();fr.onload=function(){$('#backup').value=String(fr.result);restoreFrom(String(fr.result));};fr.onerror=function(){setMsg($('#backupMsg'),'Could not read file.','err');};fr.readAsText(f);e.target.value='';});
+
+  initializeStorage();
+})();
+</script>
+
+</body></html>
